@@ -1,0 +1,25 @@
+[mysqld]
+# --- CẤU HÌNH BẢO MẬT (HARDENING) CHO MYSQL 8.0 ---
+# Vô hiệu hóa đọc file cục bộ từ phía client (chống tấn công đọc file hệ thống qua SQLi)
+local_infile = 0
+
+# Vô hiệu hóa symbolic links để ngăn chặn leo thang đặc quyền qua hệ thống file
+symbolic-links = 0
+
+# Chỉ cho phép kết nối TCP nội bộ trong Docker network, tắt phân giải tên miền ngược để tăng tốc và bảo mật
+skip-name-resolve = 1
+
+# Bộ mã ký tự chuẩn hỗ trợ đầy đủ Tiếng Việt
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+
+# Giới hạn kết nối và bộ nhớ đệm phù hợp máy cá nhân demo
+max_connections = 150
+max_connect_errors = 100
+innodb_buffer_pool_size = 256M
+
+# Bật Performance Schema để hỗ trợ giám sát qua Prometheus mysqld-exporter
+performance_schema = ON
+
+[client]
+default-character-set = utf8mb4

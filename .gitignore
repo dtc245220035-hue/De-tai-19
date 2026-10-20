@@ -1,0 +1,13 @@
+# Hệ điều hành & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dữ liệu runtime tạm thời hoặc backup local
+*.bak
+*.tmp
+*.log
+backups/

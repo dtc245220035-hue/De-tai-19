@@ -1,0 +1,161 @@
+# ==============================================================================
+# DOCKER COMPOSE - ĐỀ 19: WEBSITE TIN TỨC / CỔNG THÔNG TIN (VIETNEWS 24H)
+# Giai đoạn 1 (Commit 1): WordPress + MySQL + phpMyAdmin + Nginx Reverse Proxy
+# ==============================================================================
+
+name: vietnews-de19
+
+services:
+  # 1. Cơ sở dữ liệu MySQL 8.0 (Lưu trữ bền vững bằng Named Volume)
+  mysql:
+    image: mysql:8.0
+    container_name: vietnews-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/conf.d/hardening.cnf:/etc/mysql/conf.d/hardening.cnf:ro
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - backend_net
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 25s
+
+  # 2. Công cụ quản trị Database: phpMyAdmin (Chỉ bind loopback 127.0.0.1)
+  phpmyadmin:
+    image: phpmyadmin:5.2-apache
+    container_name: vietnews-phpmyadmin
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 32M
+      TZ: Asia/Ho_Chi_Minh
+    ports:
+      - "127.0.0.1:${PHPMYADMIN_PORT:-8081}:80"
+    networks:
+      - backend_net
+    security_opt:
+      - no-new-privileges:true
+
+  # 3. Ứng dụng Website Tin tức: WordPress Official Image
+  wordpress:
+    image: wordpress:6.7-php8.2-apache
+    container_name: vietnews-wordpress
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: mysql:3306
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_TABLE_PREFIX: ${WP_TABLE_PREFIX:-vn24_}
+      WORDPRESS_CONFIG_EXTRA: |
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+            $$_SERVER['HTTPS'] = 'on';
+        }
+        if (isset($$_SERVER['HTTP_X_FORWARDED_HOST'])) {
+            $$_SERVER['HTTP_HOST'] = $$_SERVER['HTTP_X_FORWARDED_HOST'];
+        }
+        define('DISALLOW_FILE_EDIT', true);
+        define('WP_AUTO_UPDATE_CORE', false);
+        define('FORCE_SSL_ADMIN', false);
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./wordpress/themes/vietnews-portal:/var/www/html/wp-content/themes/vietnews-portal
+    networks:
+      - frontend_net
+      - backend_net
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:80/wp-login.php >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # 4. Tác vụ Tự động Khởi tạo Giao diện & Dữ liệu mẫu Tiếng Việt (WP-CLI)
+  wp-setup:
+    image: wordpress:cli-2.11-php8.2
+    container_name: vietnews-wp-setup
+    user: "33:33"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      wordpress:
+        condition: service_started
+    environment:
+      WORDPRESS_DB_HOST: mysql:3306
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WP_SITE_URL: ${WP_SITE_URL}
+      WP_SITE_TITLE: ${WP_SITE_TITLE}
+      WP_ADMIN_USER: ${WP_ADMIN_USER}
+      WP_ADMIN_PASSWORD: ${WP_ADMIN_PASSWORD}
+      WP_ADMIN_EMAIL: ${WP_ADMIN_EMAIL}
+      WP_EDITOR_USER: ${WP_EDITOR_USER}
+      WP_EDITOR_PASSWORD: ${WP_EDITOR_PASSWORD}
+      WP_EDITOR_EMAIL: ${WP_EDITOR_EMAIL}
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./wordpress/themes/vietnews-portal:/var/www/html/wp-content/themes/vietnews-portal
+      - ./wordpress/setup:/setup:ro
+    entrypoint: ["sh", "-c", "tr -d '\\r' < /setup/init-wordpress.sh | sh"]
+    networks:
+      - backend_net
+    restart: "no"
+
+  # 5. Nginx Reverse Proxy (HTTPS tự ký + Security Headers + Rate Limiting)
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: vietnews-nginx
+    restart: unless-stopped
+    depends_on:
+      wordpress:
+        condition: service_started
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - nginx_logs:/var/log/nginx
+    networks:
+      - frontend_net
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+networks:
+  frontend_net:
+    driver: bridge
+  backend_net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  wordpress_data:
+  nginx_logs:

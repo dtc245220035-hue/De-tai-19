@@ -9,15 +9,19 @@ CREATE DATABASE IF NOT EXISTS `vietnews_db`
   COLLATE utf8mb4_unicode_ci;
 
 -- 2. Phân quyền tối thiểu cho tài khoản ứng dụng WordPress (chỉ có quyền trên vietnews_db)
-CREATE USER IF NOT EXISTS 'wp_news_user'@'%' IDENTIFIED BY 'VnNews#App$2026!WpUsr88';
+CREATE USER IF NOT EXISTS 'wp_news_user'@'%' IDENTIFIED BY 'Admin@123';
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER
   ON `vietnews_db`.* TO 'wp_news_user'@'%';
+
+-- Tài khoản admin quản trị toàn quyền cho phpMyAdmin demo
+CREATE USER IF NOT EXISTS 'admin'@'%' IDENTIFIED BY 'Admin@123';
+GRANT ALL PRIVILEGES ON *.* TO 'admin'@'%' WITH GRANT OPTION;
 
 -- 3. Tạo tài khoản chuyên biệt chỉ đọc Metrics cho Prometheus MySQL Exporter
 -- Áp dụng nguyên tắc Least Privilege: Không có quyền đọc dữ liệu bảng của ứng dụng (vietnews_db),
 -- chỉ có quyền PROCESS, REPLICATION CLIENT và SELECT trên performance_schema, giới hạn tối đa 5 kết nối.
 CREATE USER IF NOT EXISTS 'exporter_user'@'%'
-  IDENTIFIED BY 'VnNews#Exp$2026!Metric77'
+  IDENTIFIED BY 'Admin@123'
   WITH MAX_USER_CONNECTIONS 5;
 
 GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'exporter_user'@'%';

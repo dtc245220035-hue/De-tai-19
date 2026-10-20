@@ -1,0 +1,40 @@
+# ==============================================================================
+# CẤU HÌNH PROMTAIL - ĐỀ 19: WEBSITE TIN TỨC / CỔNG THÔNG TIN (VIETNEWS 24H)
+# Thu thập Log tự động từ toàn bộ Docker Containers (qua Docker Socket)
+# và từ thư mục Log của Nginx Reverse Proxy (/var/log/nginx/*.log)
+# ==============================================================================
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # 1. Tự động phát hiện và thu thập log từ tất cả các Docker Containers trong hệ thống
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Lấy tên container (bỏ dấu '/' ở đầu)
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: "container"
+      # Lấy tên service trong docker-compose (ví dụ: nginx, wordpress, mysql, prometheus...)
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: "service"
+      # Lấy tên project docker-compose
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        target_label: "project"
+      # Lấy luồng log (stdout / stderr)
+      - source_labels: ["__meta_docker_container_log_stream"]
+        target_label: "stream"
+      # Gắn nhãn job cố định để dễ truy vấn bằng LogQL
+      - replacement: "docker-containers"
+        target_label: "job"
+

@@ -19,10 +19,10 @@ while [ ! -f /var/www/html/wp-includes/version.php ]; do
     sleep 2
 done
 
-# 2. Đợi kết nối MySQL sẵn sàng
+# 2. Đợi kết nối MySQL sẵn sàng (sử dụng PHP mysqli chuẩn của WordPress)
 echo "[2/6] Đang kiểm tra kết nối tới MySQL Database..."
 RETRY=0
-until wp db check --allow-root >/dev/null 2>&1; do
+until php -r 'mysqli_report(MYSQLI_REPORT_OFF); $db = @new mysqli("mysql", getenv("WORDPRESS_DB_USER"), getenv("WORDPRESS_DB_PASSWORD"), getenv("WORDPRESS_DB_NAME"), 3306); exit($db && !$db->connect_errno ? 0 : 1);' >/dev/null 2>&1; do
     RETRY=$((RETRY + 1))
     if [ "$RETRY" -gt 60 ]; then
         echo "Lỗi: Không thể kết nối MySQL sau 120 giây!"
@@ -58,11 +58,20 @@ wp option update timezone_string "Asia/Ho_Chi_Minh" --allow-root
 wp option update date_format "d/m/Y" --allow-root
 wp option update time_format "H:i" --allow-root
 wp option update posts_per_page 10 --allow-root
-wp rewrite structure '/%postname%/' --hard --allow-root
-wp rewrite flush --hard --allow-root
+wp rewrite structure '/%postname%/' --allow-root
+wp rewrite flush --allow-root
 
 # Kích hoạt giao diện tin tức tiếng Việt chuyên biệt
 wp theme activate vietnews-portal --allow-root
+
+# Tạo thêm tài khoản admin quản trị chuẩn cho demo nếu chưa có
+if ! wp user get "admin" --allow-root >/dev/null 2>&1; then
+    wp user create "admin" "admin@vietnews24h.local" \
+        --role=administrator \
+        --user_pass="${WP_ADMIN_PASSWORD:-Admin@123}" \
+        --display_name="Admin" \
+        --allow-root
+fi
 
 # Tạo thêm tài khoản Biên tập viên (Editor) phục vụ phân quyền quản trị
 if ! wp user get "${WP_EDITOR_USER:-bientapvien}" --allow-root >/dev/null 2>&1; then
@@ -241,11 +250,12 @@ if [ "$POST_COUNT" -lt 5 ]; then
     wp post meta update "$P10" _vietnews_views_count 910 --allow-root
 
     # Đánh dấu 4 bài viết đầu tiên là Bài viết Nổi bật (Sticky Posts)
-    wp post stick "$P1" "$P2" "$P3" "$P4" --allow-root
+    wp eval "stick_post($P1); stick_post($P2); stick_post($P3); stick_post($P4);" --allow-root
 
     echo "  -> Đã khởi tạo thành công 10 bài viết mẫu Tiếng Việt và gắn 4 bài Nổi bật!"
 else
-    echo "[6/6] Dữ liệu bài viết mẫu đã tồn tại ($POST_COUNT bài viết). Bỏ qua bước tạo mới."
+    echo "[6/6] Dữ liệu bài viết mẫu đã tồn tại ($POST_COUNT bài viết). Đảm bảo gắn 4 bài Nổi bật..."
+    wp eval '$posts = get_posts(array("numberposts" => 4, "fields" => "ids")); foreach ($posts as $id) { stick_post($id); }' --allow-root
 fi
 
 echo "=================================================================="

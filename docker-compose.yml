@@ -1,12 +1,14 @@
 # ==============================================================================
-# DOCKER COMPOSE - ĐỀ 19: WEBSITE TIN TỨC / CỔNG THÔNG TIN (VIETNEWS 24H)
-# Giai đoạn 2 (Commit 2): Tích hợp Giám sát Prometheus + Grafana + Exporters
+# DOCKER COMPOSE HOÀN CHỈNH - ĐỀ 19: WEBSITE TIN TỨC / CỔNG THÔNG TIN (VIETNEWS 24H)
+# Giai đoạn 3 (Commit 3): Tích hợp Loki + Promtail (LogQL) & Hardening Toàn Diện
 # ==============================================================================
 
 name: vietnews-de19
 
 services:
-  # 1. Cơ sở dữ liệu MySQL 8.0 (Lưu trữ bền vững bằng Named Volume)
+  # ----------------------------------------------------------------------------
+  # 1. CƠ SỞ DỮ LIỆU: MySQL 8.0 (Bền vững qua Volume + Cấu hình Hardening)
+  # ----------------------------------------------------------------------------
   mysql:
     image: mysql:8.0
     container_name: vietnews-mysql
@@ -21,10 +23,13 @@ services:
       - mysql_data:/var/lib/mysql
       - ./mysql/conf.d/hardening.cnf:/etc/mysql/conf.d/hardening.cnf:ro
       - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    # Hardening: Không mở cổng 3306 ra máy host, chỉ giao tiếp trong backend_net
     networks:
       - backend_net
     security_opt:
       - no-new-privileges:true
+    mem_limit: 768m
+    pids_limit: 200
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
       interval: 10s
@@ -32,7 +37,9 @@ services:
       retries: 10
       start_period: 25s
 
-  # 2. Công cụ quản trị Database: phpMyAdmin (Chỉ bind loopback 127.0.0.1)
+  # ----------------------------------------------------------------------------
+  # 2. CÔNG CỤ QUẢN TRỊ DB: phpMyAdmin (Chỉ bind Loopback 127.0.0.1)
+  # ----------------------------------------------------------------------------
   phpmyadmin:
     image: phpmyadmin:5.2-apache
     container_name: vietnews-phpmyadmin
@@ -51,8 +58,17 @@ services:
       - backend_net
     security_opt:
       - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 100
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:80/ >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
 
-  # 3. Ứng dụng Website Tin tức: WordPress Official Image
+  # ----------------------------------------------------------------------------
+  # 3. ỨNG DỤNG WEB TIN TỨC: WordPress Official Image (Không mở cổng trực tiếp)
+  # ----------------------------------------------------------------------------
   wordpress:
     image: wordpress:6.7-php8.2-apache
     container_name: vietnews-wordpress
@@ -67,6 +83,9 @@ services:
       WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
       WORDPRESS_TABLE_PREFIX: ${WP_TABLE_PREFIX:-vn24_}
       WORDPRESS_CONFIG_EXTRA: |
+        if (!isset($$_SERVER['HTTP_HOST'])) {
+            $$_SERVER['HTTP_HOST'] = 'localhost';
+        }
         if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
             $$_SERVER['HTTPS'] = 'on';
         }
@@ -84,6 +103,8 @@ services:
       - backend_net
     security_opt:
       - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 150
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:80/wp-login.php >/dev/null || exit 1"]
       interval: 15s
@@ -91,7 +112,9 @@ services:
       retries: 10
       start_period: 20s
 
-  # 4. Tác vụ Tự động Khởi tạo Giao diện & Dữ liệu mẫu Tiếng Việt (WP-CLI)
+  # ----------------------------------------------------------------------------
+  # 4. TÁC VỤ KHỞI TẠO TỰ ĐỘNG: WP-CLI (Chạy Non-root UID 33:33 www-data)
+  # ----------------------------------------------------------------------------
   wp-setup:
     image: wordpress:cli-2.11-php8.2
     container_name: vietnews-wp-setup
@@ -106,6 +129,7 @@ services:
       WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
       WORDPRESS_DB_USER: ${MYSQL_USER}
       WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_TABLE_PREFIX: ${WP_TABLE_PREFIX:-vn24_}
       WP_SITE_URL: ${WP_SITE_URL}
       WP_SITE_TITLE: ${WP_SITE_TITLE}
       WP_ADMIN_USER: ${WP_ADMIN_USER}
@@ -121,9 +145,13 @@ services:
     entrypoint: ["sh", "-c", "tr -d '\\r' < /setup/init-wordpress.sh | sh"]
     networks:
       - backend_net
+    security_opt:
+      - no-new-privileges:true
     restart: "no"
 
-  # 5. Nginx Reverse Proxy (HTTPS tự ký + Security Headers + Rate Limiting)
+  # ----------------------------------------------------------------------------
+  # 5. REVERSE PROXY: Nginx (HTTPS tự ký + Security Headers + Rate Limiting)
+  # ----------------------------------------------------------------------------
   nginx:
     image: nginx:1.27-alpine
     container_name: vietnews-nginx
@@ -144,13 +172,17 @@ services:
       - monitoring_net
     security_opt:
       - no-new-privileges:true
+    mem_limit: 128m
+    pids_limit: 100
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/healthz >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
 
-  # 6. Nginx Prometheus Exporter (Giám sát Web Server / Reverse Proxy)
+  # ----------------------------------------------------------------------------
+  # 6. NGINX EXPORTER: Thu thập Metrics từ Nginx (Chạy Non-root 65534:65534)
+  # ----------------------------------------------------------------------------
   nginx-exporter:
     image: nginx/nginx-prometheus-exporter:1.3.0
     container_name: vietnews-nginx-exporter
@@ -167,8 +199,12 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    mem_limit: 64m
+    pids_limit: 50
 
-  # 7. MySQL Prometheus Exporter (Giám sát Database với tài khoản Least Privilege)
+  # ----------------------------------------------------------------------------
+  # 7. MYSQL EXPORTER: Thu thập Metrics từ MySQL (Chạy Non-root 65534:65534)
+  # ----------------------------------------------------------------------------
   mysql-exporter:
     image: prom/mysqld-exporter:v0.15.1
     container_name: vietnews-mysql-exporter
@@ -191,8 +227,12 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    mem_limit: 64m
+    pids_limit: 50
 
-  # 8. Google cAdvisor (Giám sát tài nguyên CPU/RAM/Network của Docker Containers)
+  # ----------------------------------------------------------------------------
+  # 8. CADVISOR: Giám sát Tài nguyên Container (CPU, RAM, Network, Disk)
+  # ----------------------------------------------------------------------------
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     container_name: vietnews-cadvisor
@@ -208,8 +248,12 @@ services:
       - monitoring_net
     security_opt:
       - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 100
 
-  # 9. Prometheus Server (Thu thập và lưu trữ Time-Series Metrics)
+  # ----------------------------------------------------------------------------
+  # 9. PROMETHEUS: Hệ thống Giám sát Tập trung (Chạy Non-root 65534:65534)
+  # ----------------------------------------------------------------------------
   prometheus:
     image: prom/prometheus:v2.53.1
     container_name: vietnews-prometheus
@@ -235,8 +279,12 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    mem_limit: 512m
+    pids_limit: 100
 
-  # 10. Grafana (Trực quan hóa Metrics & Logs trên Dashboard tự động)
+  # ----------------------------------------------------------------------------
+  # 10. GRAFANA: Bảng điều khiển Giám sát & Truy vấn Log (Chạy Non-root 472:472)
+  # ----------------------------------------------------------------------------
   grafana:
     image: grafana/grafana:11.1.0
     container_name: vietnews-grafana
@@ -244,6 +292,7 @@ services:
     restart: unless-stopped
     depends_on:
       - prometheus
+      - loki
     environment:
       GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
@@ -262,7 +311,58 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    mem_limit: 256m
+    pids_limit: 100
 
+  # ----------------------------------------------------------------------------
+  # 11. LOKI: Hệ thống Lưu trữ & Truy vấn Log Tập trung (Chạy Non-root 10001:10001)
+  # ----------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:2.9.8
+    container_name: vietnews-loki
+    user: "10001:10001"
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    networks:
+      - monitoring_net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    pids_limit: 100
+
+  # ----------------------------------------------------------------------------
+  # 12. PROMTAIL: Agent Thu thập Log từ Docker Socket & Nginx Logs
+  # ----------------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:2.9.8
+    container_name: vietnews-promtail
+    restart: unless-stopped
+    depends_on:
+      - loki
+    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - monitoring_net
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    pids_limit: 100
+
+# ==============================================================================
+# CÔ LẬP MẠNG NỘI BỘ (NETWORK ISOLATION - HARDENING)
+# - frontend_net: Chỉ nối giữa Nginx Reverse Proxy và WordPress
+# - backend_net:  Chỉ nối giữa WordPress, phpMyAdmin, MySQL và MySQL Exporter
+# - monitoring_net: Chỉ dành cho các dịch vụ Giám sát (Prometheus, Grafana, Loki, Promtail, Exporters)
+# ==============================================================================
 networks:
   frontend_net:
     driver: bridge
@@ -271,9 +371,13 @@ networks:
   monitoring_net:
     driver: bridge
 
+# ==============================================================================
+# LƯU TRỮ DỮ LIỆU BỀN VỮNG (PERSISTENT VOLUMES)
+# ==============================================================================
 volumes:
   mysql_data:
   wordpress_data:
   nginx_logs:
   prometheus_data:
   grafana_data:
+  loki_data:

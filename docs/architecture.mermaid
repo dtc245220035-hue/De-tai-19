@@ -1,0 +1,30 @@
+flowchart TB
+    Client["Trình duyệt<br/>HTTP 80<br/>HTTPS 443"]
+    Nginx["Nginx non-root<br/>Reverse proxy<br/>Security headers"]
+    WP["WordPress & Theme<br/>Cổng thông tin VietNews 24h<br/>Cổng nội bộ 80"]
+    MySQL[("MySQL 8.0<br/>vietnews_db · 12 bảng<br/>Volume mysql_data")]
+    PMA["phpMyAdmin<br/>127.0.0.1:8081"]
+
+    Exp["Exporters<br/>Nginx & MySQL<br/>cAdvisor container"]
+    LogVol["Volumes log<br/>Docker Socket API<br/>Nginx access/error"]
+
+    Graf["Grafana<br/>127.0.0.1:3000<br/>Dashboard & Explore"]
+    Prom["Prometheus<br/>127.0.0.1:9090<br/>Scrape 15s"]
+    Promtail["Promtail<br/>Đọc Docker Socket<br/>Gắn nhãn job, service"]
+    Loki[("Loki<br/>127.0.0.1:3100<br/>TSDB & filesystem")]
+
+    Client -->|request| Nginx
+    Nginx -->|proxy| WP
+    WP -->|SQL| MySQL
+    PMA -->|mạng database| MySQL
+
+    Nginx -.->|ghi metrics| Exp
+    MySQL -.->|exporter_user| Exp
+    WP -.->|stdout/stderr| LogVol
+    Nginx -.->|stdout/stderr| LogVol
+
+    Exp -->|metrics| Prom
+    Prom -->|PromQL| Graf
+    LogVol -->|thu gom| Promtail
+    Promtail -->|push log| Loki
+    Graf -.->|LogQL qua mạng monitoring| Loki

@@ -1,0 +1,52 @@
+@startuml
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam roundCorner 10
+skinparam shadowing false
+skinparam arrowColor #1E3A8A
+skinparam arrowThickness 1.5
+
+skinparam rectangle {
+    BackgroundColor #F8FAFC
+    BorderColor #1E3A8A
+    BorderThickness 1.5
+    FontColor #0F172A
+}
+
+title ĐỀ 19: KIẾN TRÚC TRIỂN KHAI THỰC TẾ (VIETNEWS 24H)
+
+rectangle "Trình duyệt\nHTTP 80\nHTTPS 443" as Client #DBEAFE
+rectangle "Nginx non-root\nReverse proxy\nSecurity headers\nRate limit 10r/m" as Nginx #E0F2FE
+rectangle "WordPress & Theme\nCổng thông tin VietNews 24h\nTheme: vietnews-portal\nCổng nội bộ :80" as WP #FEF3C7
+rectangle "MySQL 8.0\nvietnews_db · 12 bảng (vn24_)\nVolume mysql_data\nKhông publish cổng DB" as MySQL #DCFCE7
+rectangle "phpMyAdmin\n127.0.0.1:8081\nTài khoản wp_news_user" as PMA #FCE7F3
+
+rectangle "Exporters\nNginx & MySQL\ncAdvisor container" as Exp #F1F5F9
+rectangle "Volumes log\nDocker Socket API\nNginx access/error" as LogVol #F1F5F9
+
+rectangle "Grafana\n127.0.0.1:3000\nDashboard và Explore" as Graf #FFEDD5
+rectangle "Prometheus\n127.0.0.1:9090\nScrape mỗi 15 giây" as Prom #FFEDD5
+rectangle "Promtail\nĐọc Docker Socket\nGắn nhãn job, service" as Promtail #F3E8FF
+rectangle "Loki\n127.0.0.1:3100\nTSDB và filesystem\nRetention 168 giờ" as Loki #F3E8FF
+
+Client -right-> Nginx : request
+Nginx -right-> WP : proxy
+WP -right-> MySQL : SQL
+
+PMA -up-> MySQL : mạng database
+
+Nginx -down-> Exp : ghi metrics
+MySQL -down-> Exp : exporter_user
+WP -down-> LogVol : ghi file/stdout
+Nginx -down-> LogVol : ghi file/stdout
+
+Exp -down-> Prom : metrics
+Prom -left-> Graf : PromQL
+LogVol -down-> Promtail : thu gom
+Promtail -right-> Loki : push log
+
+Graf -right-> Loki : Grafana truy vấn Loki bằng LogQL qua mạng monitoring
+
+footer Mạng frontend_net · backend_net (internal) · monitoring_net\nNguồn: docker-compose.yml (Học phần Triển khai & Quản trị Hệ thống Phần mềm - Đề 19)
+@enduml
